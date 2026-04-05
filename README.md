@@ -71,26 +71,6 @@ Release APK:
 
 ## Signed Release Bilgisi
 
-Release imzalama ayari app/build.gradle.kts icinde keystore.properties dosyasindan okunur.
-Yerel dosya ornegi:
-
-storeFile=keystore/release-keystore.jks
-storePassword=YOUR_STORE_PASSWORD
-keyAlias=manga_release
-keyPassword=YOUR_KEY_PASSWORD
-
-Guvenlik notu:
-
-- keystore.properties ve .jks dosyalari repoya eklenmemelidir.
-
-## APK Boyutu ve GitHub Release Notu
-
-Model dosyasi APK icine gomulu oldugu icin release APK boyutu cok buyuk olabilir.
-GitHub Release tek dosya limiti 2 GiB oldugundan buyuk APK dosyalari dogrudan yuklenemeyebilir.
-Bu durumda:
-
-- APK parcalanip yuklenebilir (part01/part02)
-- Kullanimdan once parcalar tek APK haline birlestirilmelidir
 
 ## Ana Dosyalar
 
