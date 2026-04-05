@@ -29,7 +29,7 @@ fun OverlayTranslationRenderer(
     Canvas(modifier = modifier.fillMaxSize()) {
         val textPaint = TextPaint().apply {
             isAntiAlias = true
-            color = Color.White.toArgb()
+            color = Color.Black.toArgb()
             style = android.graphics.Paint.Style.FILL
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         }
@@ -61,9 +61,9 @@ fun OverlayTranslationRenderer(
                 maxTextPx = 36.sp.toPx()
             )
 
-            // AMOLED uyumlu: koyu panel + beyaz metin.
+            // Okunakli panel: beyaz zemin + siyah metin.
             drawRect(
-                color = Color(0xD9000000),
+                color = Color.White,
                 topLeft = Offset(renderSpec.drawRect.left.toFloat(), renderSpec.drawRect.top.toFloat()),
                 size = Size(renderSpec.drawRect.width().toFloat(), renderSpec.drawRect.height().toFloat()),
                 blendMode = BlendMode.SrcOver
