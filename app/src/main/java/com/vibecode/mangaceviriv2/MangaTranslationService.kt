@@ -42,6 +42,7 @@ import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -53,8 +54,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.LinkedHashMap
 import java.util.Locale
-import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 
 class MangaTranslationService : LifecycleService() {
@@ -87,13 +88,23 @@ class MangaTranslationService : LifecycleService() {
     private var modelUnloadJob: Job? = null
     private var currentStage: TranslationStage = TranslationStage.IDLE
     private var activeRequestStartedAtMs: Long = 0L
-    private var blockedRequestCount: Int = 0
+    private var activeTranslationJob: Job? = null
+    private val activeRequestToken = AtomicLong(0L)
+    private val inferenceCacheLock = Any()
+    private val inferenceCache = object : LinkedHashMap<String, InferenceCacheEntry>(
+        INFERENCE_CACHE_MAX_ENTRIES,
+        0.75f,
+        true
+    ) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, InferenceCacheEntry>?): Boolean {
+            return size > INFERENCE_CACHE_MAX_ENTRIES
+        }
+    }
 
     @Volatile
-    private var lastInferenceKey: String = ""
-
+    private var lastKnownCacheCleanupAtMs: Long = 0L
     @Volatile
-    private var lastTranslatedBlocks: List<TranslationBlock> = emptyList()
+    private var temporalSnapshot: OcrTemporalSnapshot? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -146,7 +157,10 @@ class MangaTranslationService : LifecycleService() {
                     sourceLanguage = intent.getStringExtra(EXTRA_SOURCE_LANGUAGE).orEmpty().ifBlank { "English" },
                     targetLanguage = intent.getStringExtra(EXTRA_TARGET_LANGUAGE).orEmpty().ifBlank { "Turkish" },
                     translationTone = intent.getStringExtra(EXTRA_TRANSLATION_TONE).orEmpty().ifBlank { "Dogal" },
-                    literalMode = intent.getBooleanExtra(EXTRA_LITERAL_TRANSLATION, false)
+                    literalMode = intent.getBooleanExtra(EXTRA_LITERAL_TRANSLATION, false),
+                    dictionaryProfile = intent.getStringExtra(EXTRA_DICTIONARY_PROFILE)
+                        .orEmpty()
+                        .ifBlank { TranslationCoreUtils.DEFAULT_DICTIONARY_PROFILE }
                 )
                 applyTranslationConfig(config)
                 startProjection(resultCode, resultData)
@@ -158,6 +172,8 @@ class MangaTranslationService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        activeTranslationJob?.cancel()
+        activeTranslationJob = null
         stopProjection()
         textRecognizer.close()
         overlayManager.hide()
@@ -169,10 +185,18 @@ class MangaTranslationService : LifecycleService() {
     }
 
     private fun applyTranslationConfig(newConfig: TranslationConfig) {
+        val configChanged = translationConfig != newConfig
         val modelChanged = translationConfig.modelFileName != newConfig.modelFileName
         translationConfig = newConfig
         val literalStatus = if (newConfig.literalMode) "Birebir" else "Standart"
-        overlayManager.setOperationStatus("${newConfig.sourceLanguage} â†’ ${newConfig.targetLanguage} | Ton: ${newConfig.translationTone} | Mod: $literalStatus")
+        overlayManager.setOperationStatus(
+            "${newConfig.sourceLanguage} -> ${newConfig.targetLanguage} | Ton: ${newConfig.translationTone} | Mod: $literalStatus | Profil: ${newConfig.dictionaryProfile}"
+        )
+
+        if (configChanged) {
+            clearInferenceCache()
+            temporalSnapshot = null
+        }
 
         if (modelChanged || gemmaInferenceEngine == null) {
             gemmaInferenceEngine?.close()
@@ -306,14 +330,14 @@ class MangaTranslationService : LifecycleService() {
                 } else {
                     block.lines.mapNotNull { line ->
                         val rect = line.boundingBox ?: return@mapNotNull null
-                        val normalizedText = normalizeOcrText(line.text)
+                        val normalizedText = TranslationCoreUtils.normalizeOcrText(line.text)
                         if (normalizedText.isBlank() || !isUsefulOcrText(normalizedText)) return@mapNotNull null
                         scaledBlock(normalizedText, rect, ocrInput.scaleX, ocrInput.scaleY)
                     }
                 }
             }
 
-            mergeNearbyBlocks(rawBlocks)
+            TranslationCoreUtils.mergeNearbyBlocks(rawBlocks)
         } finally {
             if (ocrInput.shouldRecycle) {
                 ocrInput.bitmap.recycle()
@@ -347,21 +371,13 @@ class MangaTranslationService : LifecycleService() {
     }
 
     private fun parseTranslation(jsonText: String): List<TranslationBlock> {
-        return runCatching {
-            var cleanJson = jsonText
-            val startIdx = jsonText.indexOf('[')
-            val endIdx = jsonText.lastIndexOf(']')
-            if (startIdx != -1 && endIdx != -1 && endIdx >= startIdx) {
-                cleanJson = jsonText.substring(startIdx, endIdx + 1)
-            }
-            json.decodeFromString<List<TranslationBlock>>(cleanJson)
-        }.onSuccess {
-            Log.d(TAG, "JSON parse basarili, blok sayisi=${it.size}")
-        }.onFailure {
-            Log.e(TAG, "JSON parse basarisiz. Ham metin: $jsonText", it)
-        }.getOrElse {
-            emptyList()
+        val parsed = TranslationCoreUtils.parseModelJson(jsonText, json)
+        if (parsed.isNotEmpty()) {
+            Log.d(TAG, "JSON parse basarili, blok sayisi=${parsed.size}")
+        } else {
+            Log.e(TAG, "JSON parse basarisiz. Ham metin: $jsonText")
         }
+        return parsed
     }
 
     private fun createNotificationChannel() {
@@ -391,26 +407,33 @@ class MangaTranslationService : LifecycleService() {
     }
 
     private fun runTranslationFlow(selection: FrameSelection) {
-        if (!translationInProgress.compareAndSet(false, true)) {
-            blockedRequestCount += 1
-            val elapsed = requestElapsedSeconds()
-            overlayManager.setOperationStatus(
-                "Mesgul: ${currentStage.label} adiminda devam ediyor (${elapsed}s). Yeni istek isleme alinmadi (tekrar: $blockedRequestCount)."
-            )
-            return
+        val requestToken = activeRequestToken.incrementAndGet()
+        val previousJob = activeTranslationJob
+        if (previousJob?.isActive == true) {
+            previousJob.cancel(CancellationException("Superseded by newer selection"))
+            overlayManager.setOperationStatus("Yeni secim algilandi, onceki istek iptal edilip yenisi baslatiliyor")
         }
 
         modelUnloadJob?.cancel()
         modelUnloadJob = null
-        blockedRequestCount = 0
         activeRequestStartedAtMs = System.currentTimeMillis()
+        translationInProgress.set(true)
+
+        val requestStartedAt = activeRequestStartedAtMs
+        var captureDoneAt = requestStartedAt
+        var ocrDoneAt = requestStartedAt
+        var dictionaryDoneAt = requestStartedAt
+        var inferenceDoneAt = requestStartedAt
+        var parseDoneAt = requestStartedAt
+        var renderDoneAt = requestStartedAt
+        var modelRetryUsed = false
 
         pushStageStatus(
             stage = TranslationStage.CAPTURE,
             detail = "Adim 1/6: secilen alan yakalaniyor"
         )
 
-        lifecycleScope.launch {
+        activeTranslationJob = lifecycleScope.launch {
             var bitmap: Bitmap? = null
             try {
                 bitmap = withContext(Dispatchers.Default) {
@@ -426,10 +449,13 @@ class MangaTranslationService : LifecycleService() {
                         .getOrNull()
                 }
 
+                if (!isCurrentRequest(requestToken)) return@launch
+
                 if (bitmap == null) {
                     overlayManager.setModelError("Adim 1/6 basarisiz: secim goruntusu alinamadi")
                     return@launch
                 }
+                captureDoneAt = System.currentTimeMillis()
 
                 pushStageStatus(
                     stage = TranslationStage.OCR,
@@ -441,11 +467,14 @@ class MangaTranslationService : LifecycleService() {
                         .getOrElse { emptyList() }
                 }
 
+                if (!isCurrentRequest(requestToken)) return@launch
+
                 if (ocrBlocks.isEmpty()) {
                     clearTranslationOverlay()
                     overlayManager.setModelError("Adim 2/6: OCR metin bulamadi, farkli bir alan deneyin")
                     return@launch
                 }
+                ocrDoneAt = System.currentTimeMillis()
 
                 val optimizedOcrBlocks = optimizeBlocksForInference(ocrBlocks)
                 val contextualBlocks = buildContextualInferenceBlocks(optimizedOcrBlocks)
@@ -456,35 +485,120 @@ class MangaTranslationService : LifecycleService() {
                     stage = TranslationStage.DICTIONARY,
                     detail = "Adim 3/6: sozluk eslesmesi $dictionaryHitCount/${dictionaryBlocks.size}"
                 )
+                dictionaryDoneAt = System.currentTimeMillis()
 
                 if (dictionaryBlocks.all { it.translated.isNotBlank() }) {
+                    inferenceDoneAt = dictionaryDoneAt
+                    parseDoneAt = dictionaryDoneAt
                     latestBlocks = dictionaryBlocks
                     pushStageStatus(
                         stage = TranslationStage.RENDER,
                         detail = "Adim 4/6: tum metinler sozlukten geldi, model cagrisi yok"
                     )
                     showTranslationOverlay(selection, dictionaryBlocks)
+                    renderDoneAt = System.currentTimeMillis()
+                    updateTemporalSnapshot(selection, contextualBlocks, dictionaryBlocks)
+                    TranslationFeedbackStore.saveRecentTranslations(
+                        context = this@MangaTranslationService,
+                        config = currentContextConfig(),
+                        blocks = dictionaryBlocks
+                    )
+                    recordTranslationMetrics(fromCache = false, fromDictionaryOnly = true)
+                    appendDebugRecord(
+                        sourceType = "dictionary",
+                        cacheReason = "dictionary_only",
+                        blockCount = dictionaryBlocks.size,
+                        requestStartedAt = requestStartedAt,
+                        captureDoneAt = captureDoneAt,
+                        ocrDoneAt = ocrDoneAt,
+                        dictionaryDoneAt = dictionaryDoneAt,
+                        inferenceDoneAt = inferenceDoneAt,
+                        parseDoneAt = parseDoneAt,
+                        renderDoneAt = renderDoneAt,
+                        modelRetryUsed = false
+                    )
                     overlayManager.setModelReady("Ceviri tamamlandi (${requestElapsedSeconds()}s, sozluk)")
                     return@launch
                 }
 
                 val unknownBlocks = dictionaryBlocks.filter { it.translated.isBlank() }
-                val inferenceKey = buildInferenceKey(unknownBlocks)
-                if (inferenceKey == lastInferenceKey && lastTranslatedBlocks.isNotEmpty()) {
+                val inferenceKey = buildInferenceKey(selection, unknownBlocks)
+                val cachedBlocks = getCachedInference(inferenceKey)
+                if (!cachedBlocks.isNullOrEmpty()) {
                     pushStageStatus(
                         stage = TranslationStage.CACHE,
                         detail = "Adim 4/6: onceki ceviri onbellegi kullanildi"
                     )
-                    latestBlocks = lastTranslatedBlocks
-                    showTranslationOverlay(selection, lastTranslatedBlocks)
+                    inferenceDoneAt = dictionaryDoneAt
+                    parseDoneAt = dictionaryDoneAt
+                    latestBlocks = cachedBlocks
+                    showTranslationOverlay(selection, cachedBlocks)
+                    renderDoneAt = System.currentTimeMillis()
+                    updateTemporalSnapshot(selection, contextualBlocks, cachedBlocks)
+                    TranslationFeedbackStore.saveRecentTranslations(
+                        context = this@MangaTranslationService,
+                        config = currentContextConfig(),
+                        blocks = cachedBlocks
+                    )
+                    recordTranslationMetrics(fromCache = true, fromDictionaryOnly = false)
+                    appendDebugRecord(
+                        sourceType = "cache",
+                        cacheReason = "inference_cache",
+                        blockCount = cachedBlocks.size,
+                        requestStartedAt = requestStartedAt,
+                        captureDoneAt = captureDoneAt,
+                        ocrDoneAt = ocrDoneAt,
+                        dictionaryDoneAt = dictionaryDoneAt,
+                        inferenceDoneAt = inferenceDoneAt,
+                        parseDoneAt = parseDoneAt,
+                        renderDoneAt = renderDoneAt,
+                        modelRetryUsed = false
+                    )
                     overlayManager.setModelReady("Ceviri tamamlandi (${requestElapsedSeconds()}s, onbellek)")
                     return@launch
                 }
 
+                val temporalBlocks = findTemporalStabilizedBlocks(selection, contextualBlocks)
+                if (!temporalBlocks.isNullOrEmpty()) {
+                    pushStageStatus(
+                        stage = TranslationStage.CACHE,
+                        detail = "Adim 4/6: zamansal OCR stabilizasyonu kullanildi"
+                    )
+                    inferenceDoneAt = dictionaryDoneAt
+                    parseDoneAt = dictionaryDoneAt
+                    latestBlocks = temporalBlocks
+                    showTranslationOverlay(selection, temporalBlocks)
+                    renderDoneAt = System.currentTimeMillis()
+                    updateTemporalSnapshot(selection, contextualBlocks, temporalBlocks)
+                    TranslationFeedbackStore.saveRecentTranslations(
+                        context = this@MangaTranslationService,
+                        config = currentContextConfig(),
+                        blocks = temporalBlocks
+                    )
+                    recordTranslationMetrics(fromCache = true, fromDictionaryOnly = false)
+                    appendDebugRecord(
+                        sourceType = "temporal",
+                        cacheReason = "temporal_stabilization",
+                        blockCount = temporalBlocks.size,
+                        requestStartedAt = requestStartedAt,
+                        captureDoneAt = captureDoneAt,
+                        ocrDoneAt = ocrDoneAt,
+                        dictionaryDoneAt = dictionaryDoneAt,
+                        inferenceDoneAt = inferenceDoneAt,
+                        parseDoneAt = parseDoneAt,
+                        renderDoneAt = renderDoneAt,
+                        modelRetryUsed = false
+                    )
+                    overlayManager.setModelReady("Ceviri tamamlandi (${requestElapsedSeconds()}s, zamansal stabilize)")
+                    return@launch
+                }
+
                 var canCacheInferenceResult = false
+                val adaptiveOutputTokens = TranslationCoreUtils.adaptiveOutputTokenLimit(unknownBlocks)
+                val adaptiveInputChars = TranslationCoreUtils.adaptiveInputCharLimit(unknownBlocks)
                 pushStageStatus(
                     stage = TranslationStage.MODEL,
-                    detail = "Adim 4/6: model cevirisi yapiliyor (${unknownBlocks.size} blok)"
+                    detail = "Adim 4/6: model cevirisi yapiliyor (${unknownBlocks.size} blok, tok=$adaptiveOutputTokens)"
                 )
 
                 var errorMessage: String? = null
@@ -493,17 +607,24 @@ class MangaTranslationService : LifecycleService() {
                         Log.d(TAG, "Gemma modeline girdi gonderildi")
                         ensureModelReady()
                         val engine = gemmaInferenceEngine ?: throw IllegalStateException("Model hazir degil")
-                        engine.runTranslation(
+                        val response = engine.runTranslation(
                             visionDescription = buildOcrPrompt(unknownBlocks),
                             sourceLanguage = translationConfig.sourceLanguage,
                             targetLanguage = translationConfig.targetLanguage,
-                            translationTone = translationConfig.translationTone
+                            translationTone = translationConfig.translationTone,
+                            outputTokenLimit = adaptiveOutputTokens,
+                            maxInputChars = adaptiveInputChars
                         )
+                        modelRetryUsed = engine.wasLastRunRetried()
+                        response
                     }.onFailure {
                         Log.e(TAG, "runTranslation failed", it)
                         errorMessage = it.message ?: it.toString()
                     }.getOrNull()
                 }
+                inferenceDoneAt = System.currentTimeMillis()
+
+                if (!isCurrentRequest(requestToken)) return@launch
 
                 if (translationJson != null) {
                     Log.d(TAG, "Modelden ham yanit geldi: $translationJson")
@@ -537,22 +658,42 @@ class MangaTranslationService : LifecycleService() {
                         }
                     }
                 }
+                parseDoneAt = System.currentTimeMillis()
+
+                if (!isCurrentRequest(requestToken)) return@launch
 
                 latestBlocks = translatedBlocks
 
                 if (translatedBlocks.isNotEmpty()) {
                     if (canCacheInferenceResult) {
-                        lastInferenceKey = inferenceKey
-                        lastTranslatedBlocks = translatedBlocks
-                    } else {
-                        lastInferenceKey = ""
-                        lastTranslatedBlocks = emptyList()
+                        putCachedInference(inferenceKey, translatedBlocks)
                     }
                     pushStageStatus(
                         stage = TranslationStage.RENDER,
                         detail = "Adim 6/6: sonuc gosteriliyor (${translatedBlocks.size} blok)"
                     )
                     showTranslationOverlay(selection, translatedBlocks)
+                    renderDoneAt = System.currentTimeMillis()
+                    updateTemporalSnapshot(selection, contextualBlocks, translatedBlocks)
+                    TranslationFeedbackStore.saveRecentTranslations(
+                        context = this@MangaTranslationService,
+                        config = currentContextConfig(),
+                        blocks = translatedBlocks
+                    )
+                    recordTranslationMetrics(fromCache = false, fromDictionaryOnly = false)
+                    appendDebugRecord(
+                        sourceType = "model",
+                        cacheReason = if (canCacheInferenceResult) "model_run" else "model_fallback",
+                        blockCount = translatedBlocks.size,
+                        requestStartedAt = requestStartedAt,
+                        captureDoneAt = captureDoneAt,
+                        ocrDoneAt = ocrDoneAt,
+                        dictionaryDoneAt = dictionaryDoneAt,
+                        inferenceDoneAt = inferenceDoneAt,
+                        parseDoneAt = parseDoneAt,
+                        renderDoneAt = renderDoneAt,
+                        modelRetryUsed = modelRetryUsed
+                    )
                     overlayManager.setModelReady("Ceviri tamamlandi (${requestElapsedSeconds()}s)")
                 } else {
                     clearTranslationOverlay()
@@ -560,11 +701,16 @@ class MangaTranslationService : LifecycleService() {
                 }
 
                 Log.d(TAG, "Parsed blocks: ${latestBlocks.size}")
+            } catch (_: CancellationException) {
+                Log.d(TAG, "Ceviri istegi yeni secim nedeniyle iptal edildi")
             } finally {
                 bitmap?.recycle()
-                currentStage = TranslationStage.IDLE
-                translationInProgress.set(false)
-                scheduleModelUnloadIfIdle()
+                if (isCurrentRequest(requestToken)) {
+                    currentStage = TranslationStage.IDLE
+                    translationInProgress.set(false)
+                    activeTranslationJob = null
+                    scheduleModelUnloadIfIdle()
+                }
             }
         }
     }
@@ -578,6 +724,185 @@ class MangaTranslationService : LifecycleService() {
         if (activeRequestStartedAtMs <= 0L) return 0L
         return ((System.currentTimeMillis() - activeRequestStartedAtMs) / 1000L).coerceAtLeast(0L)
     }
+
+    private fun isCurrentRequest(token: Long): Boolean {
+        return activeRequestToken.get() == token
+    }
+
+    private fun currentContextConfig(): TranslationContextConfig {
+        return TranslationContextConfig(
+            modelFileName = translationConfig.modelFileName,
+            sourceLanguage = translationConfig.sourceLanguage,
+            targetLanguage = translationConfig.targetLanguage,
+            translationTone = translationConfig.translationTone,
+            literalMode = translationConfig.literalMode,
+            dictionaryProfile = translationConfig.dictionaryProfile
+        )
+    }
+
+    private fun recordTranslationMetrics(fromCache: Boolean, fromDictionaryOnly: Boolean) {
+        val durationMs = (System.currentTimeMillis() - activeRequestStartedAtMs).coerceAtLeast(0L)
+        TranslationMetricsStore.recordTranslation(
+            context = this,
+            durationMs = durationMs,
+            fromCache = fromCache,
+            fromDictionaryOnly = fromDictionaryOnly
+        )
+    }
+
+    private fun getCachedInference(cacheKey: String): List<TranslationBlock>? {
+        val now = System.currentTimeMillis()
+        synchronized(inferenceCacheLock) {
+            cleanupExpiredInferenceCache(now)
+            val entry = inferenceCache[cacheKey] ?: return null
+            if (now - entry.createdAtMs > INFERENCE_CACHE_TTL_MS) {
+                inferenceCache.remove(cacheKey)
+                return null
+            }
+            return entry.blocks
+        }
+    }
+
+    private fun putCachedInference(cacheKey: String, blocks: List<TranslationBlock>) {
+        if (blocks.isEmpty()) return
+        synchronized(inferenceCacheLock) {
+            cleanupExpiredInferenceCache(System.currentTimeMillis())
+            inferenceCache[cacheKey] = InferenceCacheEntry(
+                createdAtMs = System.currentTimeMillis(),
+                blocks = blocks
+            )
+        }
+    }
+
+    private fun clearInferenceCache() {
+        synchronized(inferenceCacheLock) {
+            inferenceCache.clear()
+            lastKnownCacheCleanupAtMs = 0L
+        }
+    }
+
+    private fun cleanupExpiredInferenceCache(nowMs: Long) {
+        if (nowMs - lastKnownCacheCleanupAtMs < INFERENCE_CACHE_CLEANUP_INTERVAL_MS) return
+        val iterator = inferenceCache.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next().value
+            if (nowMs - entry.createdAtMs > INFERENCE_CACHE_TTL_MS) {
+                iterator.remove()
+            }
+        }
+        lastKnownCacheCleanupAtMs = nowMs
+    }
+
+    private fun appendDebugRecord(
+        sourceType: String,
+        cacheReason: String,
+        blockCount: Int,
+        requestStartedAt: Long,
+        captureDoneAt: Long,
+        ocrDoneAt: Long,
+        dictionaryDoneAt: Long,
+        inferenceDoneAt: Long,
+        parseDoneAt: Long,
+        renderDoneAt: Long,
+        modelRetryUsed: Boolean
+    ) {
+        TranslationDebugStore.appendRecord(
+            context = this,
+            record = TranslationDebugRecord(
+                createdAtMs = System.currentTimeMillis(),
+                sourceType = sourceType,
+                cacheReason = cacheReason,
+                blockCount = blockCount,
+                totalDurationMs = (renderDoneAt - requestStartedAt).coerceAtLeast(0L),
+                captureMs = (captureDoneAt - requestStartedAt).coerceAtLeast(0L),
+                ocrMs = (ocrDoneAt - captureDoneAt).coerceAtLeast(0L),
+                dictionaryMs = (dictionaryDoneAt - ocrDoneAt).coerceAtLeast(0L),
+                inferenceMs = (inferenceDoneAt - dictionaryDoneAt).coerceAtLeast(0L),
+                parseMs = (parseDoneAt - inferenceDoneAt).coerceAtLeast(0L),
+                renderMs = (renderDoneAt - parseDoneAt).coerceAtLeast(0L),
+                modelRetryUsed = modelRetryUsed
+            )
+        )
+    }
+
+    private fun findTemporalStabilizedBlocks(
+        selection: FrameSelection,
+        ocrBlocks: List<TranslationBlock>
+    ): List<TranslationBlock>? {
+        val snapshot = temporalSnapshot ?: return null
+        val now = System.currentTimeMillis()
+        if (now - snapshot.createdAtMs > OCR_TEMPORAL_WINDOW_MS) return null
+        if (snapshot.contextFingerprint != currentContextFingerprint()) return null
+        if (!isSelectionTemporallySimilar(snapshot.selection, selection)) return null
+
+        val currentSignature = buildTemporalTextSignature(ocrBlocks)
+        val similarity = temporalSignatureSimilarity(snapshot.textSignature, currentSignature)
+        if (similarity < OCR_TEMPORAL_MIN_TEXT_SIMILARITY) return null
+
+        return snapshot.translatedBlocks
+    }
+
+    private fun updateTemporalSnapshot(
+        selection: FrameSelection,
+        sourceBlocks: List<TranslationBlock>,
+        translatedBlocks: List<TranslationBlock>
+    ) {
+        if (translatedBlocks.isEmpty() || sourceBlocks.isEmpty()) return
+
+        temporalSnapshot = OcrTemporalSnapshot(
+            createdAtMs = System.currentTimeMillis(),
+            contextFingerprint = currentContextFingerprint(),
+            selection = selection,
+            textSignature = buildTemporalTextSignature(sourceBlocks),
+            translatedBlocks = translatedBlocks
+        )
+    }
+
+    private fun currentContextFingerprint(): String {
+        return listOf(
+            translationConfig.modelFileName,
+            translationConfig.sourceLanguage,
+            translationConfig.targetLanguage,
+            translationConfig.translationTone,
+            if (translationConfig.literalMode) "literal" else "standard",
+            TranslationCoreUtils.normalizeProfileName(translationConfig.dictionaryProfile)
+        ).joinToString("|")
+    }
+
+    private fun buildTemporalTextSignature(blocks: List<TranslationBlock>): Set<String> {
+        return blocks
+            .asSequence()
+            .flatMap { block ->
+                TranslationCoreUtils.normalizeOcrText(block.original)
+                    .lowercase(Locale.ROOT)
+                    .split(' ')
+                    .asSequence()
+            }
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+            .take(MAX_TEMPORAL_SIGNATURE_TOKENS)
+            .toSet()
+    }
+
+    private fun temporalSignatureSimilarity(left: Set<String>, right: Set<String>): Float {
+        if (left.isEmpty() || right.isEmpty()) return 0f
+        val intersection = left.intersect(right).size.toFloat()
+        val union = left.union(right).size.toFloat().coerceAtLeast(1f)
+        return intersection / union
+    }
+
+    private fun isSelectionTemporallySimilar(previous: FrameSelection, current: FrameSelection): Boolean {
+        val leftDiff = kotlin.math.abs(previous.left - current.left)
+        val topDiff = kotlin.math.abs(previous.top - current.top)
+        val widthDiff = kotlin.math.abs(previous.width - current.width)
+        val heightDiff = kotlin.math.abs(previous.height - current.height)
+
+        return leftDiff <= TEMPORAL_SELECTION_DELTA_PX &&
+            topDiff <= TEMPORAL_SELECTION_DELTA_PX &&
+            widthDiff <= TEMPORAL_SELECTION_DELTA_PX &&
+            heightDiff <= TEMPORAL_SELECTION_DELTA_PX
+    }
+
     private suspend fun ensureModelReady() {
         val engine = gemmaInferenceEngine ?: throw IllegalStateException("Model secimi yapilmadi")
         if (engine.isReady()) return
@@ -796,17 +1121,11 @@ class MangaTranslationService : LifecycleService() {
     }
 
     private fun optimizeBlocksForInference(ocrBlocks: List<TranslationBlock>): List<TranslationBlock> {
-        if (ocrBlocks.isEmpty()) return emptyList()
-
-        return ocrBlocks
-            .asSequence()
-            .map { block ->
-                block.copy(original = normalizeOcrText(block.original).take(MAX_TEXT_PER_BLOCK))
-            }
-            .filter { it.original.isNotBlank() }
-            .sortedWith(compareBy({ it.box.getOrElse(1) { 0 } }, { it.box.getOrElse(0) { 0 } }))
-            .take(MAX_BLOCK_COUNT_FOR_INFERENCE)
-            .toList()
+        return TranslationCoreUtils.prioritizeBlocksForInference(
+            blocks = ocrBlocks,
+            maxBlockCount = MAX_BLOCK_COUNT_FOR_INFERENCE,
+            maxTextPerBlock = MAX_TEXT_PER_BLOCK
+        )
     }
 
     private fun buildContextualInferenceBlocks(blocks: List<TranslationBlock>): List<TranslationBlock> {
@@ -952,29 +1271,11 @@ class MangaTranslationService : LifecycleService() {
     }
 
     private fun dictionaryKey(text: String): String {
-        val normalized = normalizeOcrText(text).lowercase(Locale.ROOT)
-        val source = translationConfig.sourceLanguage.lowercase(Locale.ROOT)
-        val target = translationConfig.targetLanguage.lowercase(Locale.ROOT)
-        val tone = translationConfig.translationTone.lowercase(Locale.ROOT)
-        val literal = if (translationConfig.literalMode) "literal" else "standard"
-        return "$source|$target|$tone|$literal|$normalized"
+        return TranslationCoreUtils.buildDictionaryKey(currentContextConfig(), text)
     }
 
-    private fun buildInferenceKey(ocrBlocks: List<TranslationBlock>): String {
-        val configPart = "${translationConfig.modelFileName}|${translationConfig.sourceLanguage}|${translationConfig.targetLanguage}|${translationConfig.translationTone}"
-        val blocksPart = ocrBlocks.joinToString("|") { block ->
-            "${block.original}#${block.box.joinToString(",")}"
-        }
-        return sha256Hex("$configPart::$blocksPart")
-    }
-
-    private fun sha256Hex(input: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
-        return buildString(digest.size * 2) {
-            digest.forEach { byte ->
-                append((byte.toInt() and 0xff).toString(16).padStart(2, '0'))
-            }
-        }
+    private fun buildInferenceKey(selection: FrameSelection, ocrBlocks: List<TranslationBlock>): String {
+        return TranslationCoreUtils.buildInferenceCacheKey(currentContextConfig(), selection, ocrBlocks)
     }
 
     private fun reconcileTranslatedBlocks(
@@ -1014,59 +1315,8 @@ class MangaTranslationService : LifecycleService() {
         )
     }
 
-    private fun mergeNearbyBlocks(blocks: List<TranslationBlock>): List<TranslationBlock> {
-        if (blocks.isEmpty()) return emptyList()
-        val sorted = blocks.sortedWith(compareBy({ it.box.getOrElse(1) { 0 } }, { it.box.getOrElse(0) { 0 } }))
-        val merged = ArrayList<TranslationBlock>(sorted.size)
-
-        for (block in sorted) {
-            val previous = merged.lastOrNull()
-            if (previous != null && canMerge(previous, block)) {
-                merged[merged.lastIndex] = mergeBlocks(previous, block)
-            } else {
-                merged.add(block)
-            }
-        }
-        return merged
-    }
-
-    private fun canMerge(left: TranslationBlock, right: TranslationBlock): Boolean {
-        val l = left.toRect()
-        val r = right.toRect()
-        val verticalCenterDiff = kotlin.math.abs(l.centerY() - r.centerY())
-        val averageHeight = (l.height() + r.height()) / 2
-        val gap = r.left - l.right
-
-        return verticalCenterDiff <= averageHeight / 2 && gap in -16..48
-    }
-
-    private fun mergeBlocks(left: TranslationBlock, right: TranslationBlock): TranslationBlock {
-        val l = left.toRect()
-        val r = right.toRect()
-        val mergedRect = Rect(
-            minOf(l.left, r.left),
-            minOf(l.top, r.top),
-            maxOf(l.right, r.right),
-            maxOf(l.bottom, r.bottom)
-        )
-
-        return TranslationBlock(
-            original = "${left.original} ${right.original}".trim(),
-            translated = "",
-            box = listOf(
-                mergedRect.left,
-                mergedRect.top,
-                mergedRect.width(),
-                mergedRect.height()
-            )
-        )
-    }
-
     private fun normalizeOcrText(text: String): String {
-        return text
-            .replace("\n", " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        return TranslationCoreUtils.normalizeOcrText(text)
     }
 
     private fun isUsefulOcrText(text: String): Boolean {
@@ -1136,6 +1386,13 @@ class MangaTranslationService : LifecycleService() {
         private const val MIN_OCR_ALNUM_COUNT = 2
         private const val MODEL_IDLE_UNLOAD_MS = 90_000L
         private const val TRANSLATION_DICTIONARY_PREFS = "translation_dictionary_prefs"
+        private const val INFERENCE_CACHE_MAX_ENTRIES = 12
+        private const val INFERENCE_CACHE_TTL_MS = 45_000L
+        private const val INFERENCE_CACHE_CLEANUP_INTERVAL_MS = 5_000L
+        private const val OCR_TEMPORAL_WINDOW_MS = 3_500L
+        private const val OCR_TEMPORAL_MIN_TEXT_SIMILARITY = 0.82f
+        private const val MAX_TEMPORAL_SIGNATURE_TOKENS = 64
+        private const val TEMPORAL_SELECTION_DELTA_PX = 22
         private const val OVERLAY_MERGE_MAX_GAP_PX = 48
         private const val OVERLAY_MERGE_MIN_OVERLAP_RATIO = 0.25f
         private const val OVERLAY_MERGE_MIN_SIMILARITY = 0.34f
@@ -1152,6 +1409,7 @@ class MangaTranslationService : LifecycleService() {
         const val EXTRA_TARGET_LANGUAGE = "extra_target_language"
         const val EXTRA_TRANSLATION_TONE = "extra_translation_tone"
         const val EXTRA_LITERAL_TRANSLATION = "extra_literal_translation"
+        const val EXTRA_DICTIONARY_PROFILE = "extra_dictionary_profile"
     }
 }
 
@@ -1173,25 +1431,46 @@ private data class OcrInput(
     val shouldRecycle: Boolean
 )
 
+private data class InferenceCacheEntry(
+    val createdAtMs: Long,
+    val blocks: List<TranslationBlock>
+)
+
+private data class OcrTemporalSnapshot(
+    val createdAtMs: Long,
+    val contextFingerprint: String,
+    val selection: FrameSelection,
+    val textSignature: Set<String>,
+    val translatedBlocks: List<TranslationBlock>
+)
+
 private data class TranslationConfig(
     val modelFileName: String = "gemma-4-E2B-it.litertlm",
     val sourceLanguage: String = "English",
     val targetLanguage: String = "Turkish",
     val translationTone: String = "Dogal",
-    val literalMode: Boolean = false
+    val literalMode: Boolean = false,
+    val dictionaryProfile: String = TranslationCoreUtils.DEFAULT_DICTIONARY_PROFILE
 )
 
 private class TranslationDictionary(private val prefs: SharedPreferences) {
     private val map = LinkedHashMap<String, String>()
+    @Volatile
+    private var lastRawSnapshot: String? = null
 
     init {
-        load()
+        reloadFromDisk(force = true)
     }
 
-    fun get(key: String): String? = map[key]
+    fun get(key: String): String? {
+        reloadFromDisk()
+        return map[key]
+    }
 
     fun putAll(entries: Map<String, String>) {
         if (entries.isEmpty()) return
+        reloadFromDisk()
+
         var changed = false
         entries.forEach { (key, value) ->
             val cleanValue = value.trim()
@@ -1211,8 +1490,16 @@ private class TranslationDictionary(private val prefs: SharedPreferences) {
         persist()
     }
 
-    private fun load() {
-        val raw = prefs.getString(KEY_DICTIONARY, null) ?: return
+    private fun reloadFromDisk(force: Boolean = false) {
+        val raw = prefs.getString(KEY_DICTIONARY, null)
+        if (!force && raw == lastRawSnapshot) return
+
+        map.clear()
+        if (raw.isNullOrBlank()) {
+            lastRawSnapshot = raw
+            return
+        }
+
         runCatching {
             val obj = JSONObject(raw)
             val keys = obj.keys()
@@ -1224,12 +1511,15 @@ private class TranslationDictionary(private val prefs: SharedPreferences) {
                 }
             }
         }
+        lastRawSnapshot = raw
     }
 
     private fun persist() {
         val obj = JSONObject()
         map.forEach { (key, value) -> obj.put(key, value) }
-        prefs.edit().putString(KEY_DICTIONARY, obj.toString()).apply()
+        val raw = obj.toString()
+        prefs.edit().putString(KEY_DICTIONARY, raw).apply()
+        lastRawSnapshot = raw
     }
 
     companion object {

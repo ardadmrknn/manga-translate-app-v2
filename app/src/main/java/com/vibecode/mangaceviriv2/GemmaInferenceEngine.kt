@@ -24,8 +24,11 @@ class GemmaInferenceEngine(
     private var lastPromptKey: String = ""
     @Volatile
     private var lastResponse: String? = null
+    @Volatile
+    private var lastRunUsedRetry: Boolean = false
 
     fun isReady(): Boolean = initialized
+    fun wasLastRunRetried(): Boolean = lastRunUsedRetry
 
     fun initialize() {
         if (initialized) return
@@ -92,27 +95,36 @@ class GemmaInferenceEngine(
         visionDescription: String,
         sourceLanguage: String,
         targetLanguage: String,
-        translationTone: String
+        translationTone: String,
+        outputTokenLimit: Int = DEFAULT_OUTPUT_TOKENS,
+        maxInputChars: Int = DEFAULT_MAX_INPUT_CHARS
     ): String {
         if (!initialized) {
             throw IllegalStateException("Gemma baslatilamadi: ${initializationError?.message}")
         }
+        lastRunUsedRetry = false
+
+        val safeOutputTokenLimit = outputTokenLimit.coerceIn(MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS)
+        val safeInputChars = maxInputChars.coerceIn(MIN_INPUT_CHARS, MAX_INPUT_CHARS)
+        val retryInputChars = (safeInputChars * RETRY_INPUT_RATIO).toInt().coerceAtLeast(MIN_RETRY_INPUT_CHARS)
+        val retryOutputTokens = (safeOutputTokenLimit * RETRY_OUTPUT_RATIO).toInt().coerceAtLeast(MIN_OUTPUT_TOKENS)
 
         val compactInput = visionDescription
             .replace("\n", " ")
             .replace(Regex("\\s+"), " ")
             .trim()
-            .take(MAX_INPUT_CHARS)
+            .take(safeInputChars)
         val userPrompt = buildUserPrompt(
             compactInput = compactInput,
             sourceLanguage = sourceLanguage,
             targetLanguage = targetLanguage,
             translationTone = translationTone,
-            outputTokenLimit = MAX_OUTPUT_TOKENS
+            outputTokenLimit = safeOutputTokenLimit
         )
 
         if (userPrompt == lastPromptKey && !lastResponse.isNullOrBlank()) {
             Log.d(TAG, "Ayni istem tekrarlandigi icin model yaniti onbellekten dondu")
+            lastRunUsedRetry = false
             return lastResponse!!
         }
 
@@ -133,12 +145,13 @@ class GemmaInferenceEngine(
 
         if (response.isNullOrBlank() && isLikelyContextOverflow(lastError)) {
             Log.w(TAG, "Context asimi algilandi, kompakt prompt ile tek sefer retry")
+            lastRunUsedRetry = true
             val retryPrompt = buildUserPrompt(
-                compactInput = compactInput.take(RETRY_INPUT_CHARS),
+                compactInput = compactInput.take(retryInputChars),
                 sourceLanguage = sourceLanguage,
                 targetLanguage = targetLanguage,
                 translationTone = translationTone,
-                outputTokenLimit = RETRY_OUTPUT_TOKENS
+                outputTokenLimit = retryOutputTokens
             )
 
             response = runCatching {
@@ -223,15 +236,21 @@ class GemmaInferenceEngine(
         initialized = false
         lastPromptKey = ""
         lastResponse = null
+        lastRunUsedRetry = false
         Log.d(TAG, "Engine kapatildi")
     }
 
     companion object {
         private const val TAG = "GemmaInferenceEngine"
-        private const val MAX_INPUT_CHARS = 1400
-        private const val RETRY_INPUT_CHARS = 900
-        private const val MAX_OUTPUT_TOKENS = 256
-        private const val RETRY_OUTPUT_TOKENS = 160
+        private const val DEFAULT_MAX_INPUT_CHARS = 1400
+        private const val MIN_INPUT_CHARS = 700
+        private const val MIN_RETRY_INPUT_CHARS = 500
+        private const val MAX_INPUT_CHARS = 1800
+        private const val DEFAULT_OUTPUT_TOKENS = 256
+        private const val MIN_OUTPUT_TOKENS = 120
+        private const val MAX_OUTPUT_TOKENS = 420
+        private const val RETRY_INPUT_RATIO = 0.7f
+        private const val RETRY_OUTPUT_RATIO = 0.7f
         private const val MAX_CONTEXT_TOKENS = 1536
         private const val SAMPLER_TOP_K = 24
         private const val SAMPLER_TOP_P = 0.85
