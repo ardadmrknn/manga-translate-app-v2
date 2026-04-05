@@ -278,7 +278,7 @@ object TranslationFeedbackStore {
             return DictionaryTransferResult(
                 importedCount = 0,
                 skippedCount = 0,
-                message = "Gecersiz JSON formati"
+                message = "Geçersiz JSON formatı"
             )
         }
 
@@ -316,7 +316,7 @@ object TranslationFeedbackStore {
             return DictionaryTransferResult(
                 importedCount = 0,
                 skippedCount = skipped,
-                message = "Ice aktarilacak uygun kayit bulunamadi"
+                message = "İçe aktarılacak uygun kayıt bulunamadı"
             )
         }
 
@@ -324,7 +324,7 @@ object TranslationFeedbackStore {
         return DictionaryTransferResult(
             importedCount = updates.size,
             skippedCount = skipped,
-            message = "${updates.size} kayit ice aktarildi"
+            message = "${updates.size} kayıt içe aktarıldı"
         )
     }
 

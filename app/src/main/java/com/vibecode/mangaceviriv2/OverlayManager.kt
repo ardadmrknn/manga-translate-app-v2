@@ -34,11 +34,11 @@ class OverlayManager(
     private var statusTextView: TextView? = null
 
     private var currentModelStatus: ModelStatus = ModelStatus.IDLE
-    private var currentOperationMessage: String = "Hazir"
+    private var currentOperationMessage: String = "Hazır"
 
     private var lastRenderedStatusText: String = ""
 
-    // dp -> px donusumu
+    // dp -> px dönüşümü
     private fun dp(value: Int): Int = (value * density + 0.5f).toInt()
     private fun selectionMinSizePx(): Int = dp(SELECTION_MIN_SIZE_DP)
     private fun selectionSafeMarginPx(): Int = dp(SELECTION_SAFE_MARGIN_DP)
@@ -47,7 +47,7 @@ class OverlayManager(
     fun show() {
         if (bubbleView != null) return
         if (!canDrawOverlays()) {
-            Log.w(TAG, "Overlay izni yok, bubble gosterilmeyecek")
+            Log.w(TAG, "Overlay izni yok, bubble gösterilmeyecek")
             return
         }
 
@@ -83,7 +83,7 @@ class OverlayManager(
             windowManager.addView(bubble, bubbleParams)
             bubbleView = bubble
             showStatusBar()
-            setOperationStatus("Overlay hazir")
+            setOperationStatus("Overlay hazır")
         }.onFailure {
             Log.e(TAG, "Bubble overlay eklenemedi", it)
         }
@@ -101,34 +101,34 @@ class OverlayManager(
     }
 
     fun setOperationStatus(message: String) {
-        updateState(operation = message.ifBlank { "Durum guncelleniyor" })
+        updateState(operation = message.ifBlank { "Durum güncelleniyor" })
     }
 
     fun setModelLoading(detail: String? = null) {
         updateState(
             modelStatus = ModelStatus.LOADING,
-            operation = detail?.takeIf { it.isNotBlank() } ?: "Model yukleniyor"
+            operation = detail?.takeIf { it.isNotBlank() } ?: "Model yükleniyor"
         )
     }
 
     fun setModelReady(detail: String? = null) {
         updateState(
             modelStatus = ModelStatus.READY,
-            operation = detail?.takeIf { it.isNotBlank() } ?: "Model hazir"
+            operation = detail?.takeIf { it.isNotBlank() } ?: "Model hazır"
         )
     }
 
     fun setModelRunning(detail: String? = null) {
         updateState(
             modelStatus = ModelStatus.RUNNING,
-            operation = detail?.takeIf { it.isNotBlank() } ?: "Ceviri isleniyor"
+            operation = detail?.takeIf { it.isNotBlank() } ?: "Çeviri işleniyor"
         )
     }
 
     fun setModelError(detail: String? = null) {
         updateState(
             modelStatus = ModelStatus.ERROR,
-            operation = detail?.takeIf { it.isNotBlank() } ?: "Model hatasi"
+            operation = detail?.takeIf { it.isNotBlank() } ?: "Model hatası"
         )
     }
 
@@ -239,7 +239,7 @@ class OverlayManager(
                 }
             )
             addView(
-                createPresetButton("Sag") {
+                createPresetButton("Sağ") {
                     applyPresetSelection(params, SelectionPreset.RIGHT_HALF, minSize, defaultSelection)
                     applySelectionLayoutUpdate(true)
                 }
@@ -461,7 +461,7 @@ class OverlayManager(
         }
         selectionView?.let { runCatching { windowManager.removeView(it) } }
         selectionView = null
-        setOperationStatus("Secim cercevesi kapatildi")
+        setOperationStatus("Seçim çerçevesi kapatıldı")
     }
 
     private fun loadSavedSelection(): FrameSelection? {
@@ -744,12 +744,12 @@ class OverlayManager(
 
         val modelMessage = when (currentModelStatus) {
             ModelStatus.IDLE -> "Model: bekliyor"
-            ModelStatus.LOADING -> "Model: yukleniyor"
-            ModelStatus.READY -> "Model: hazir"
-            ModelStatus.RUNNING -> "Model: ceviri yapiyor"
+            ModelStatus.LOADING -> "Model: yükleniyor"
+            ModelStatus.READY -> "Model: hazır"
+            ModelStatus.RUNNING -> "Model: çeviri yapıyor"
             ModelStatus.ERROR -> "Model: hata"
         }
-        val composedText = "$modelMessage | Islem: $currentOperationMessage"
+        val composedText = "$modelMessage | İşlem: $currentOperationMessage"
 
         if (composedText == lastRenderedStatusText) return
         statusTextView?.text = composedText

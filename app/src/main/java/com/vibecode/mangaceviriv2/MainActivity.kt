@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,9 +35,14 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -200,7 +207,7 @@ class MainActivity : ComponentActivity() {
     private fun requestMediaProjectionAndStart() {
         if (startWithCachedProjectionIfPossible()) {
             captureStepCompleted.value = true
-            feedbackStatusMessage.value = "Ekran kaydi izni bu oturumda otomatik kullanildi"
+            feedbackStatusMessage.value = "Ekran kaydı izni bu oturumda otomatik kullanıldı"
             return
         }
 
@@ -255,9 +262,9 @@ class MainActivity : ComponentActivity() {
     private fun saveFeedbackEdits(editsById: Map<String, String>) {
         val applied = TranslationFeedbackStore.applyCorrections(this, editsById)
         feedbackStatusMessage.value = if (applied > 0) {
-            "$applied duzeltme kaydedildi. Sonraki cevirilerde kullanilacak."
+            "$applied düzeltme kaydedildi. Sonraki çevirilerde kullanılacak."
         } else {
-            "Kaydedilecek degisiklik bulunamadi."
+            "Kaydedilecek değişiklik bulunamadı."
         }
         refreshDashboardData()
     }
@@ -278,7 +285,7 @@ class MainActivity : ComponentActivity() {
         dictionaryTransferText.value = exported
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("dictionary_export", exported))
-        feedbackStatusMessage.value = "Profil JSON disa aktarildi ve panoya kopyalandi"
+        feedbackStatusMessage.value = "Profil JSON dışa aktarıldı ve panoya kopyalandı"
     }
 
     private fun importDictionaryProfile() {
@@ -296,11 +303,11 @@ class MainActivity : ComponentActivity() {
         val clip = clipboard.primaryClip
         val text = clip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
         if (text.isBlank()) {
-            feedbackStatusMessage.value = "Panoda yapistirilacak JSON bulunamadi"
+            feedbackStatusMessage.value = "Panoda yapıştırılacak JSON bulunamadı"
             return
         }
         dictionaryTransferText.value = text
-        feedbackStatusMessage.value = "Pano JSON metni alindi"
+        feedbackStatusMessage.value = "Pano JSON metni alındı"
     }
 
     private fun clearCurrentProfileDictionary() {
@@ -308,7 +315,7 @@ class MainActivity : ComponentActivity() {
             context = this,
             profileName = selectedDictionaryProfile.value
         )
-        feedbackStatusMessage.value = "$removed kayit temizlendi"
+        feedbackStatusMessage.value = "$removed kayıt temizlendi"
         refreshDashboardData()
     }
 
@@ -334,11 +341,11 @@ class MainActivity : ComponentActivity() {
         private val SOURCE_LANGUAGE_OPTIONS = listOf("English", "Japanese")
         private val TARGET_LANGUAGE_OPTIONS = listOf("Turkish", "English")
         private val TONE_OPTIONS = listOf(
-            "Dogal",
-            "Kisa",
+            "Doğal",
+            "Kısa",
             "Resmi",
             "Samimi",
-            "Akici",
+            "Akıcı",
             "Dramatik",
             "Mizahi",
             "Sert",
@@ -351,19 +358,19 @@ class MainActivity : ComponentActivity() {
 }
 
 private val AmoledDarkColorScheme = darkColorScheme(
-    primary = Color(0xFF00E5FF),
-    onPrimary = Color.Black,
-    secondary = Color(0xFF00B8D4),
-    onSecondary = Color.Black,
-    tertiary = Color(0xFF80CBC4),
-    onTertiary = Color.Black,
-    background = Color.Black,
-    onBackground = Color(0xFFE8EEF2),
-    surface = Color.Black,
-    onSurface = Color(0xFFE8EEF2),
-    surfaceVariant = Color(0xFF050607),
-    onSurfaceVariant = Color(0xFFB5C0C8),
-    outline = Color(0xFF2A3A44)
+    primary = Color(0xFF22D3EE),
+    onPrimary = Color(0xFF02222D),
+    secondary = Color(0xFF2DD4BF),
+    onSecondary = Color(0xFF03231B),
+    tertiary = Color(0xFF34D399),
+    onTertiary = Color(0xFF05231B),
+    background = Color(0xFF02090B),
+    onBackground = Color(0xFFE9F8FC),
+    surface = Color(0xFF061217),
+    onSurface = Color(0xFFE9F8FC),
+    surfaceVariant = Color(0xFF0C1D25),
+    onSurfaceVariant = Color(0xFF9EC6D3),
+    outline = Color(0xFF2D4F5C)
 )
 
 @Composable
@@ -405,6 +412,7 @@ private fun MainScreen(
     onLiteralModeChanged: (Boolean) -> Unit
 ) {
     val scrollState = rememberScrollState()
+    val canStartService = hasOverlayPermission && hasModelAsset && !started
 
     Column(
         modifier = Modifier
@@ -413,22 +421,14 @@ private fun MainScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "Manga Çeviri",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold
-        )
-        Text(
-            text = "Model ve dil ayarlarını seç, ardından çeviriyi başlat.",
-            style = MaterialTheme.typography.bodyMedium
-        )
-
-        OnboardingCard(
+        CompactHeader(
             hasOverlayPermission = hasOverlayPermission,
             hasModelAsset = hasModelAsset,
             captureStepCompleted = captureStepCompleted,
-            onRequestOverlay = onRequestOverlay,
-            onStartCapture = onStart
+            started = started,
+            selectedSource = selectedSource,
+            selectedTarget = selectedTarget,
+            selectedTone = selectedTone
         )
 
         SettingsCard(
@@ -448,20 +448,35 @@ private fun MainScreen(
             onLiteralModeChanged = onLiteralModeChanged
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Button(
+                modifier = Modifier.weight(1f),
                 onClick = onStart,
-                enabled = hasOverlayPermission && hasModelAsset && !started
+                enabled = canStartService
             ) {
                 Text(if (started) "Servis Çalışıyor" else "Çeviriyi Başlat")
             }
 
             if (started) {
-                TextButton(onClick = onStop) {
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = onStop
+                ) {
                     Text("Durdur")
                 }
             }
         }
+
+        CompactSetupCard(
+            hasOverlayPermission = hasOverlayPermission,
+            hasModelAsset = hasModelAsset,
+            captureStepCompleted = captureStepCompleted,
+            onRequestOverlay = onRequestOverlay,
+            onStartCapture = onStart
+        )
 
         DictionaryProfileCard(
             selectedDictionaryProfile = selectedDictionaryProfile,
@@ -487,18 +502,99 @@ private fun MainScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun OnboardingCard(
+private fun CompactHeader(
+    hasOverlayPermission: Boolean,
+    hasModelAsset: Boolean,
+    captureStepCompleted: Boolean,
+    started: Boolean,
+    selectedSource: String,
+    selectedTarget: String,
+    selectedTone: String
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Manga Çeviri",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Dil: $selectedSource → $selectedTarget  •  Ton: $selectedTone",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                StatusPill("Servis", started)
+                StatusPill("Overlay", hasOverlayPermission)
+                StatusPill("Model", hasModelAsset)
+                StatusPill("Capture", captureStepCompleted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusPill(label: String, active: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = if (active) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        border = BorderStroke(
+            1.dp,
+            if (active) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+            } else {
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+            }
+        )
+    ) {
+        Text(
+            text = "$label: ${if (active) "Hazır" else "Eksik"}",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun CompactSetupCard(
     hasOverlayPermission: Boolean,
     hasModelAsset: Boolean,
     captureStepCompleted: Boolean,
     onRequestOverlay: () -> Unit,
     onStartCapture: () -> Unit
 ) {
+    val totalSteps = 3
+    val completedSteps = listOf(hasOverlayPermission, hasModelAsset, captureStepCompleted).count { it }
+    val missing = buildList {
+        if (!hasOverlayPermission) add("Overlay izni")
+        if (!hasModelAsset) add("Model dosyası")
+        if (!captureStepCompleted) add("Ekran yakalama izni")
+    }
+
     Card(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
     ) {
         Column(
             modifier = Modifier
@@ -507,41 +603,47 @@ private fun OnboardingCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "Kurulum Sihirbazi",
+                text = "Kurulum Sihirbazı",
                 style = MaterialTheme.typography.titleMedium
             )
 
             Text(
-                text = if (hasOverlayPermission) "✓ 1) Overlay izni" else "• 1) Overlay izni",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Text(
-                text = if (hasModelAsset) "✓ 2) Model dosyasi" else "• 2) Model dosyasi",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Text(
-                text = if (captureStepCompleted) "✓ 3) Ekran yakalama izni" else "• 3) Ekran yakalama izni",
-                style = MaterialTheme.typography.bodyMedium
+                text = "$completedSteps/$totalSteps adım tamamlandı",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            if (!hasOverlayPermission) {
-                Button(onClick = onRequestOverlay) {
-                    Text("Overlay iznini ver")
-                }
-            } else if (!hasModelAsset) {
+            if (!hasModelAsset) {
                 Text(
-                    text = "Assets altinda .litertlm veya .task model dosyasi bulunamadi.",
+                    text = "Assets altında .litertlm veya .task model dosyası bulunamadı.",
                     style = MaterialTheme.typography.bodySmall
                 )
-            } else if (!captureStepCompleted) {
-                Button(onClick = onStartCapture) {
-                    Text("Ekran yakalama iznini tamamla")
-                }
+            }
+
+            if (missing.isEmpty()) {
+                Text(
+                    text = "Kurulum tamamlandı. İstersen bu paneli görmezden gelip ayarlardan devam edebilirsin.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             } else {
                 Text(
-                    text = "Kurulum adimlari tamamlandi. Ilk onaydan sonra bu oturumda ekran kaydi izni otomatik kullanilir.",
+                    text = "Eksik adımlar: ${missing.joinToString(", ")}",
                     style = MaterialTheme.typography.bodySmall
                 )
+
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!hasOverlayPermission) {
+                        OutlinedButton(onClick = onRequestOverlay) {
+                            Text("Overlay izni")
+                        }
+                    }
+                    if (hasOverlayPermission && hasModelAsset && !captureStepCompleted) {
+                        Button(onClick = onStartCapture) {
+                            Text("Ekran iznini tamamla")
+                        }
+                    }
+                }
             }
         }
     }
@@ -553,22 +655,31 @@ private fun FeedbackCard(
     statusMessage: String,
     onSaveFeedbackEdits: (Map<String, String>) -> Unit
 ) {
-    Card {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color.Black),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+        shape = RoundedCornerShape(18.dp)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Son Ceviri Duzeltmeleri", style = MaterialTheme.typography.titleMedium)
+            Text("Son Çeviri Düzeltmeleri", style = MaterialTheme.typography.titleMedium)
 
             if (entries.isEmpty()) {
                 Text(
-                    text = "Henuz duzeltme icin kayitli ceviri yok. Bir ceviri yapildiktan sonra burada duzenlenebilir.",
-                    style = MaterialTheme.typography.bodySmall
+                    text = "Henüz düzeltme için kayıtlı çeviri yok. Bir çeviri yapıldıktan sonra burada düzenlenebilir.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (statusMessage.isNotBlank()) {
-                    Text(statusMessage, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = statusMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 return@Column
             }
@@ -578,24 +689,60 @@ private fun FeedbackCard(
                 visibleEntries.associate { entry -> entry.id to mutableStateOf(entry.translated) }
             }
 
-            visibleEntries.forEach { entry ->
-                Text(
-                    text = "Orijinal: ${entry.original.take(120)}",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedTextField(
-                    value = editedValues.getValue(entry.id).value,
-                    onValueChange = { editedValues.getValue(entry.id).value = it },
-                    label = { Text("Duzeltilmis Ceviri") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    text = "${entry.sourceLanguage} -> ${entry.targetLanguage} | Ton: ${entry.translationTone}",
-                    style = MaterialTheme.typography.bodySmall
-                )
+            visibleEntries.forEachIndexed { index, entry ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF050E13)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Kaynak Metin",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = entry.original.take(140),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = editedValues.getValue(entry.id).value,
+                            onValueChange = { editedValues.getValue(entry.id).value = it },
+                            label = { Text("Düzeltilmiş Çeviri") },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+                                focusedContainerColor = Color(0xFF050E13),
+                                unfocusedContainerColor = Color(0xFF050E13),
+                                cursorColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = "${entry.sourceLanguage} -> ${entry.targetLanguage} | Ton: ${entry.translationTone}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (index != visibleEntries.lastIndex) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                }
             }
 
-            Button(onClick = {
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
                 val updates = LinkedHashMap<String, String>()
                 visibleEntries.forEach { entry ->
                     val updated = editedValues.getValue(entry.id).value.trim()
@@ -605,11 +752,22 @@ private fun FeedbackCard(
                 }
                 onSaveFeedbackEdits(updates)
             }) {
-                Text("Duzeltmeleri Kaydet")
+                Text("Düzeltmeleri Kaydet")
             }
 
             if (statusMessage.isNotBlank()) {
-                Text(statusMessage, style = MaterialTheme.typography.bodySmall)
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF031019),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                ) {
+                    Text(
+                        text = statusMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                    )
+                }
             }
         }
     }
@@ -647,10 +805,10 @@ private fun DictionaryProfileCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Sozluk Profili Ayarlari", style = MaterialTheme.typography.titleMedium)
+                    Text("Sözlük Profili Ayarları", style = MaterialTheme.typography.titleMedium)
                     Text(
                         text = if (settingsExpanded) {
-                            "Profil secimi ve JSON aktarim paneli acik."
+                            "Profil seçimi ve JSON aktarım paneli açık."
                         } else {
                             "Aktif profil: $selectedDictionaryProfile"
                         },
@@ -658,7 +816,7 @@ private fun DictionaryProfileCard(
                     )
                 }
                 TextButton(onClick = { settingsExpanded = !settingsExpanded }) {
-                    Text(if (settingsExpanded) "Kapat" else "Ac")
+                    Text(if (settingsExpanded) "Kapat" else "Aç")
                 }
             }
 
@@ -680,7 +838,7 @@ private fun DictionaryProfileCard(
             OutlinedTextField(
                 value = profileInput,
                 onValueChange = { profileInput = it },
-                label = { Text("Yeni / Ozel Profil Adi") },
+                label = { Text("Yeni / Özel Profil Adı") },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -689,13 +847,13 @@ private fun DictionaryProfileCard(
                     Text("Profili Kaydet")
                 }
                 Button(onClick = onExportDictionary) {
-                    Text("JSON Disa Aktar")
+                    Text("JSON Dışa Aktar")
                 }
                 Button(onClick = onPasteDictionaryJson) {
-                    Text("Panodan Yapistir")
+                    Text("Panodan Yapıştır")
                 }
                 Button(onClick = onImportDictionary) {
-                    Text("JSON Ice Aktar")
+                    Text("JSON İçe Aktar")
                 }
                 TextButton(onClick = onClearCurrentProfileDictionary) {
                     Text("Profili Temizle")
@@ -716,7 +874,11 @@ private fun DictionaryProfileCard(
 
 @Composable
 private fun DebugRecordsCard(records: List<TranslationDebugRecord>) {
-    Card {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color.Black),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+        shape = RoundedCornerShape(18.dp)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -727,21 +889,38 @@ private fun DebugRecordsCard(records: List<TranslationDebugRecord>) {
 
             if (records.isEmpty()) {
                 Text(
-                    text = "Henuz debug kaydi yok.",
+                    text = "Henüz debug kaydı yok.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 return@Column
             }
 
             records.take(MAX_DEBUG_RECORDS_ON_SCREEN).forEach { record ->
-                Text(
-                    text = "Kaynak: ${record.sourceType} | Sebep: ${record.cacheReason} | Blok: ${record.blockCount} | Toplam: ${record.totalDurationMs} ms | Retry: ${if (record.modelRetryUsed) "evet" else "hayir"}",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    text = "Capture/OCR/Sozluk/Infer/Parse/Render: ${record.captureMs}/${record.ocrMs}/${record.dictionaryMs}/${record.inferenceMs}/${record.parseMs}/${record.renderMs} ms",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF050E13),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Kaynak: ${record.sourceType} | Sebep: ${record.cacheReason}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "Blok: ${record.blockCount} | Toplam: ${record.totalDurationMs} ms | Retry: ${if (record.modelRetryUsed) "evet" else "hayır"}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "Capture/OCR/Sözlük/Infer/Parse/Render: ${record.captureMs}/${record.ocrMs}/${record.dictionaryMs}/${record.inferenceMs}/${record.parseMs}/${record.renderMs} ms",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
     }
@@ -750,9 +929,8 @@ private fun DebugRecordsCard(records: List<TranslationDebugRecord>) {
 @Composable
 private fun MetricsCard(snapshot: TranslationMetricsSnapshot) {
     Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
     ) {
         Column(
             modifier = Modifier
@@ -761,11 +939,65 @@ private fun MetricsCard(snapshot: TranslationMetricsSnapshot) {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text("Performans Metrikleri", style = MaterialTheme.typography.titleMedium)
-            Text("Toplam ceviri: ${snapshot.totalRequests}", style = MaterialTheme.typography.bodySmall)
-            Text("Ortalama sure: ${snapshot.averageDurationMs} ms", style = MaterialTheme.typography.bodySmall)
-            Text("Son ceviri suresi: ${snapshot.lastDurationMs} ms", style = MaterialTheme.typography.bodySmall)
-            Text("Cache isabeti: %${snapshot.cacheHitRatePercent}", style = MaterialTheme.typography.bodySmall)
-            Text("Sozlukten tam karsilanan: ${snapshot.dictionaryOnlyHits}", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricCell(
+                    modifier = Modifier.weight(1f),
+                    label = "Toplam Çeviri",
+                    value = snapshot.totalRequests.toString()
+                )
+                MetricCell(
+                    modifier = Modifier.weight(1f),
+                    label = "Ortalama Süre",
+                    value = "${snapshot.averageDurationMs} ms"
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricCell(
+                    modifier = Modifier.weight(1f),
+                    label = "Son Süre",
+                    value = "${snapshot.lastDurationMs} ms"
+                )
+                MetricCell(
+                    modifier = Modifier.weight(1f),
+                    label = "Cache İsabeti",
+                    value = "%${snapshot.cacheHitRatePercent}"
+                )
+            }
+            MetricCell(
+                modifier = Modifier.fillMaxWidth(),
+                label = "Sözlükten Tam Karşılanan",
+                value = snapshot.dictionaryOnlyHits.toString()
+            )
+        }
+    }
+}
+
+@Composable
+private fun MetricCell(
+    modifier: Modifier,
+    label: String,
+    value: String
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
@@ -788,7 +1020,11 @@ private fun SettingsCard(
     onToneSelected: (String) -> Unit,
     onLiteralModeChanged: (Boolean) -> Unit
 ) {
-    Card {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color.Black),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+        shape = RoundedCornerShape(18.dp)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -796,11 +1032,18 @@ private fun SettingsCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text("Çeviri Ayarları", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Model, dil ve ton ayarları canlı çeviri sırasında kullanılır.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             DropdownSetting(
                 label = "Model",
                 value = selectedModel,
                 options = modelOptions,
-                onSelected = onModelSelected
+                onSelected = onModelSelected,
+                amoled = true
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -809,7 +1052,8 @@ private fun SettingsCard(
                         label = "Kaynak Dil",
                         value = selectedSource,
                         options = sourceOptions,
-                        onSelected = onSourceSelected
+                        onSelected = onSourceSelected,
+                        amoled = true
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {
@@ -817,38 +1061,79 @@ private fun SettingsCard(
                         label = "Hedef Dil",
                         value = selectedTarget,
                         options = targetOptions,
-                        onSelected = onTargetSelected
+                        onSelected = onTargetSelected,
+                        amoled = true
                     )
                 }
             }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
 
             Text("Ton", style = MaterialTheme.typography.bodyMedium)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 toneOptions.forEach { tone ->
+                    val selected = tone == selectedTone
                     FilterChip(
-                        selected = tone == selectedTone,
+                        selected = selected,
                         onClick = { onToneSelected(tone) },
-                        label = { Text(tone) }
+                        label = { Text(tone) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
+                            selectedLabelColor = MaterialTheme.colorScheme.primary,
+                            containerColor = Color(0xFF051017),
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = selected,
+                            borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+                            selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                        )
                     )
                 }
             }
+            Text(
+                text = "Seçili ton: $selectedTone",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF030B10),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f))
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Sansursuz/Birebir Ceviri", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = "Acik oldugunda model metni yumusatmadan cevirir (uygunsa).",
-                        style = MaterialTheme.typography.bodySmall
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Sansürsüz/Birebir Çeviri", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "Açık olduğunda model metni yumuşatmadan çevirir (uygunsa).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = literalMode,
+                        onCheckedChange = onLiteralModeChanged,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                            checkedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                            uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            uncheckedTrackColor = Color(0xFF08131A),
+                            uncheckedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
+                        )
                     )
                 }
-                Switch(
-                    checked = literalMode,
-                    onCheckedChange = onLiteralModeChanged
-                )
             }
         }
     }
@@ -860,9 +1145,27 @@ private fun DropdownSetting(
     label: String,
     value: String,
     options: List<String>,
-    onSelected: (String) -> Unit
+    onSelected: (String) -> Unit,
+    amoled: Boolean = false
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val safeOptions = if (options.isEmpty()) listOf(value) else options
+    val fieldColors = if (amoled) {
+        OutlinedTextFieldDefaults.colors(
+            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+            focusedLabelColor = MaterialTheme.colorScheme.primary,
+            unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+            focusedContainerColor = Color(0xFF050E13),
+            unfocusedContainerColor = Color(0xFF050E13),
+            cursorColor = MaterialTheme.colorScheme.primary
+        )
+    } else {
+        OutlinedTextFieldDefaults.colors()
+    }
+
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = !expanded }
@@ -873,6 +1176,7 @@ private fun DropdownSetting(
             readOnly = true,
             label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            colors = fieldColors,
             modifier = Modifier
                 .menuAnchor(
                     type = ExposedDropdownMenuAnchorType.PrimaryNotEditable,
@@ -884,7 +1188,7 @@ private fun DropdownSetting(
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
-            options.forEach { option ->
+            safeOptions.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option) },
                     onClick = {

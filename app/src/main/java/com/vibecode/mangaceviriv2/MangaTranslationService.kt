@@ -156,7 +156,7 @@ class MangaTranslationService : LifecycleService() {
                     modelFileName = intent.getStringExtra(EXTRA_MODEL_FILE_NAME).orEmpty().ifBlank { DEFAULT_MODEL_FILE_NAME },
                     sourceLanguage = intent.getStringExtra(EXTRA_SOURCE_LANGUAGE).orEmpty().ifBlank { "English" },
                     targetLanguage = intent.getStringExtra(EXTRA_TARGET_LANGUAGE).orEmpty().ifBlank { "Turkish" },
-                    translationTone = intent.getStringExtra(EXTRA_TRANSLATION_TONE).orEmpty().ifBlank { "Dogal" },
+                    translationTone = intent.getStringExtra(EXTRA_TRANSLATION_TONE).orEmpty().ifBlank { "Doğal" },
                     literalMode = intent.getBooleanExtra(EXTRA_LITERAL_TRANSLATION, false),
                     dictionaryProfile = intent.getStringExtra(EXTRA_DICTIONARY_PROFILE)
                         .orEmpty()
@@ -165,7 +165,7 @@ class MangaTranslationService : LifecycleService() {
                 applyTranslationConfig(config)
                 startProjection(resultCode, resultData)
             } else {
-                overlayManager.setModelError("Ekran kaydi izni eksik")
+                overlayManager.setModelError("Ekran kaydı izni eksik")
             }
         }
         return START_STICKY
@@ -205,7 +205,7 @@ class MangaTranslationService : LifecycleService() {
 
         modelUnloadJob?.cancel()
         modelUnloadJob = null
-        overlayManager.setModelReady("Model beklemede: ${newConfig.modelFileName} (ilk istekte yuklenecek)")
+        overlayManager.setModelReady("Model beklemede: ${newConfig.modelFileName} (ilk istekte yüklenecek)")
     }
 
     private fun initDisplayMetrics() {
@@ -361,10 +361,10 @@ class MangaTranslationService : LifecycleService() {
         return """
             SRC=${translationConfig.sourceLanguage}; TGT=${translationConfig.targetLanguage}; TONE=${translationConfig.translationTone}
             INPUT i=sira, o=metin, b=[x,y,w,h]
-            BLOKLAR ayri satir parcasi olabilir; tum girdiyi birlikte okuyup baglami koru.
-            CEVIRI kelime kelime degil, cumle anlami dogal kalacak sekilde olsun.
-            ${if (translationConfig.literalMode) "ARGO, kufur ve +18 ifadeleri sansurleme; ton sertligini koru ve yildizlama yapma." else "Uygun olmayan ifadeleri dogal ve okunur bicimde yumusatabilirsin."}
-            CIKTI SADECE JSON: [{"original":"...","translated":"...","box":[x,y,w,h]}]
+            BLOKLAR ayrı satır parçası olabilir; tüm girdiyi birlikte okuyup bağlamı koru.
+            ÇEVİRİ kelime kelime değil, cümle anlamı doğal kalacak şekilde olsun.
+            ${if (translationConfig.literalMode) "ARGO, küfür ve +18 ifadeleri sansürleme; ton sertliğini koru ve yıldızlama yapma." else "Uygun olmayan ifadeleri doğal ve okunur biçimde yumuşatabilirsin."}
+            ÇIKTI SADECE JSON: [{"original":"...","translated":"...","box":[x,y,w,h]}]
             BOX AYNI KALSIN.
             OCR_INPUT=$payload
         """.trimIndent()
@@ -373,9 +373,9 @@ class MangaTranslationService : LifecycleService() {
     private fun parseTranslation(jsonText: String): List<TranslationBlock> {
         val parsed = TranslationCoreUtils.parseModelJson(jsonText, json)
         if (parsed.isNotEmpty()) {
-            Log.d(TAG, "JSON parse basarili, blok sayisi=${parsed.size}")
+            Log.d(TAG, "JSON parse başarılı, blok sayısı=${parsed.size}")
         } else {
-            Log.e(TAG, "JSON parse basarisiz. Ham metin: $jsonText")
+            Log.e(TAG, "JSON parse başarısız. Ham metin: $jsonText")
         }
         return parsed
     }
@@ -399,8 +399,8 @@ class MangaTranslationService : LifecycleService() {
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Manga ceviri servisi")
-            .setContentText("Yuzeyde ceviri icin hazir")
+            .setContentTitle("Manga çeviri servisi")
+            .setContentText("Yüzeyde çeviri için hazır")
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
             .setContentIntent(pi)
             .build()
@@ -411,7 +411,7 @@ class MangaTranslationService : LifecycleService() {
         val previousJob = activeTranslationJob
         if (previousJob?.isActive == true) {
             previousJob.cancel(CancellationException("Superseded by newer selection"))
-            overlayManager.setOperationStatus("Yeni secim algilandi, onceki istek iptal edilip yenisi baslatiliyor")
+            overlayManager.setOperationStatus("Yeni seçim algılandı, önceki istek iptal edilip yenisi başlatılıyor")
         }
 
         modelUnloadJob?.cancel()
@@ -430,7 +430,7 @@ class MangaTranslationService : LifecycleService() {
 
         pushStageStatus(
             stage = TranslationStage.CAPTURE,
-            detail = "Adim 1/6: secilen alan yakalaniyor"
+                    detail = "Adım 1/6: seçilen alan yakalanıyor"
         )
 
         activeTranslationJob = lifecycleScope.launch {
@@ -452,14 +452,14 @@ class MangaTranslationService : LifecycleService() {
                 if (!isCurrentRequest(requestToken)) return@launch
 
                 if (bitmap == null) {
-                    overlayManager.setModelError("Adim 1/6 basarisiz: secim goruntusu alinamadi")
+                    overlayManager.setModelError("Adım 1/6 başarısız: seçim görüntüsü alınamadı")
                     return@launch
                 }
                 captureDoneAt = System.currentTimeMillis()
 
                 pushStageStatus(
                     stage = TranslationStage.OCR,
-                    detail = "Adim 2/6: OCR metni okunuyor"
+                    detail = "Adım 2/6: OCR metni okunuyor"
                 )
                 val ocrBlocks = withContext(Dispatchers.Default) {
                     runCatching { extractOcrBlocks(bitmap) }
@@ -471,7 +471,7 @@ class MangaTranslationService : LifecycleService() {
 
                 if (ocrBlocks.isEmpty()) {
                     clearTranslationOverlay()
-                    overlayManager.setModelError("Adim 2/6: OCR metin bulamadi, farkli bir alan deneyin")
+                    overlayManager.setModelError("Adım 2/6: OCR metin bulamadı, farklı bir alan deneyin")
                     return@launch
                 }
                 ocrDoneAt = System.currentTimeMillis()
@@ -483,7 +483,7 @@ class MangaTranslationService : LifecycleService() {
 
                 pushStageStatus(
                     stage = TranslationStage.DICTIONARY,
-                    detail = "Adim 3/6: sozluk eslesmesi $dictionaryHitCount/${dictionaryBlocks.size}"
+                    detail = "Adım 3/6: sözlük eşleşmesi $dictionaryHitCount/${dictionaryBlocks.size}"
                 )
                 dictionaryDoneAt = System.currentTimeMillis()
 
@@ -493,7 +493,7 @@ class MangaTranslationService : LifecycleService() {
                     latestBlocks = dictionaryBlocks
                     pushStageStatus(
                         stage = TranslationStage.RENDER,
-                        detail = "Adim 4/6: tum metinler sozlukten geldi, model cagrisi yok"
+                        detail = "Adım 4/6: tüm metinler sözlükten geldi, model çağrısı yok"
                     )
                     showTranslationOverlay(selection, dictionaryBlocks)
                     renderDoneAt = System.currentTimeMillis()
@@ -517,7 +517,7 @@ class MangaTranslationService : LifecycleService() {
                         renderDoneAt = renderDoneAt,
                         modelRetryUsed = false
                     )
-                    overlayManager.setModelReady("Ceviri tamamlandi (${requestElapsedSeconds()}s, sozluk)")
+                    overlayManager.setModelReady("Çeviri tamamlandı (${requestElapsedSeconds()}s, sözlük)")
                     return@launch
                 }
 
@@ -527,7 +527,7 @@ class MangaTranslationService : LifecycleService() {
                 if (!cachedBlocks.isNullOrEmpty()) {
                     pushStageStatus(
                         stage = TranslationStage.CACHE,
-                        detail = "Adim 4/6: onceki ceviri onbellegi kullanildi"
+                        detail = "Adım 4/6: önceki çeviri önbelleği kullanıldı"
                     )
                     inferenceDoneAt = dictionaryDoneAt
                     parseDoneAt = dictionaryDoneAt
@@ -554,7 +554,7 @@ class MangaTranslationService : LifecycleService() {
                         renderDoneAt = renderDoneAt,
                         modelRetryUsed = false
                     )
-                    overlayManager.setModelReady("Ceviri tamamlandi (${requestElapsedSeconds()}s, onbellek)")
+                    overlayManager.setModelReady("Çeviri tamamlandı (${requestElapsedSeconds()}s, önbellek)")
                     return@launch
                 }
 
@@ -562,7 +562,7 @@ class MangaTranslationService : LifecycleService() {
                 if (!temporalBlocks.isNullOrEmpty()) {
                     pushStageStatus(
                         stage = TranslationStage.CACHE,
-                        detail = "Adim 4/6: zamansal OCR stabilizasyonu kullanildi"
+                        detail = "Adım 4/6: zamansal OCR stabilizasyonu kullanıldı"
                     )
                     inferenceDoneAt = dictionaryDoneAt
                     parseDoneAt = dictionaryDoneAt
@@ -589,7 +589,7 @@ class MangaTranslationService : LifecycleService() {
                         renderDoneAt = renderDoneAt,
                         modelRetryUsed = false
                     )
-                    overlayManager.setModelReady("Ceviri tamamlandi (${requestElapsedSeconds()}s, zamansal stabilize)")
+                    overlayManager.setModelReady("Çeviri tamamlandı (${requestElapsedSeconds()}s, zamansal stabilize)")
                     return@launch
                 }
 
@@ -598,15 +598,15 @@ class MangaTranslationService : LifecycleService() {
                 val adaptiveInputChars = TranslationCoreUtils.adaptiveInputCharLimit(unknownBlocks)
                 pushStageStatus(
                     stage = TranslationStage.MODEL,
-                    detail = "Adim 4/6: model cevirisi yapiliyor (${unknownBlocks.size} blok, tok=$adaptiveOutputTokens)"
+                    detail = "Adım 4/6: model çevirisi yapılıyor (${unknownBlocks.size} blok, tok=$adaptiveOutputTokens)"
                 )
 
                 var errorMessage: String? = null
                 val translationJson = withContext(Dispatchers.IO) {
                     runCatching {
-                        Log.d(TAG, "Gemma modeline girdi gonderildi")
+                        Log.d(TAG, "Gemma modeline girdi gönderildi")
                         ensureModelReady()
-                        val engine = gemmaInferenceEngine ?: throw IllegalStateException("Model hazir degil")
+                        val engine = gemmaInferenceEngine ?: throw IllegalStateException("Model hazır değil")
                         val response = engine.runTranslation(
                             visionDescription = buildOcrPrompt(unknownBlocks),
                             sourceLanguage = translationConfig.sourceLanguage,
@@ -627,14 +627,14 @@ class MangaTranslationService : LifecycleService() {
                 if (!isCurrentRequest(requestToken)) return@launch
 
                 if (translationJson != null) {
-                    Log.d(TAG, "Modelden ham yanit geldi: $translationJson")
+                    Log.d(TAG, "Modelden ham yanıt geldi: $translationJson")
                     pushStageStatus(
                         stage = TranslationStage.PARSE,
-                        detail = "Adim 5/6: model yaniti ayrisiyor"
+                        detail = "Adım 5/6: model yanıtı ayrışıyor"
                     )
                 } else {
                     overlayManager.setModelError(
-                        "Adim 4/6 hata: model yanit vermedi (${errorMessage?.take(96) ?: "bilinmeyen hata"})"
+                        "Adım 4/6 hata: model yanıt vermedi (${errorMessage?.take(96) ?: "bilinmeyen hata"})"
                     )
                 }
 
@@ -670,7 +670,7 @@ class MangaTranslationService : LifecycleService() {
                     }
                     pushStageStatus(
                         stage = TranslationStage.RENDER,
-                        detail = "Adim 6/6: sonuc gosteriliyor (${translatedBlocks.size} blok)"
+                        detail = "Adım 6/6: sonuç gösteriliyor (${translatedBlocks.size} blok)"
                     )
                     showTranslationOverlay(selection, translatedBlocks)
                     renderDoneAt = System.currentTimeMillis()
@@ -694,15 +694,15 @@ class MangaTranslationService : LifecycleService() {
                         renderDoneAt = renderDoneAt,
                         modelRetryUsed = modelRetryUsed
                     )
-                    overlayManager.setModelReady("Ceviri tamamlandi (${requestElapsedSeconds()}s)")
+                    overlayManager.setModelReady("Çeviri tamamlandı (${requestElapsedSeconds()}s)")
                 } else {
                     clearTranslationOverlay()
-                    overlayManager.setModelError("Adim 6/6: ceviri sonucu bos dondu")
+                    overlayManager.setModelError("Adım 6/6: çeviri sonucu boş döndü")
                 }
 
                 Log.d(TAG, "Parsed blocks: ${latestBlocks.size}")
             } catch (_: CancellationException) {
-                Log.d(TAG, "Ceviri istegi yeni secim nedeniyle iptal edildi")
+                Log.d(TAG, "Çeviri isteği yeni seçim nedeniyle iptal edildi")
             } finally {
                 bitmap?.recycle()
                 if (isCurrentRequest(requestToken)) {
@@ -904,15 +904,15 @@ class MangaTranslationService : LifecycleService() {
     }
 
     private suspend fun ensureModelReady() {
-        val engine = gemmaInferenceEngine ?: throw IllegalStateException("Model secimi yapilmadi")
+        val engine = gemmaInferenceEngine ?: throw IllegalStateException("Model seçimi yapılmadı")
         if (engine.isReady()) return
 
         withContext(Dispatchers.Main) {
-            overlayManager.setModelLoading("Model yukleniyor: ${translationConfig.modelFileName}")
+            overlayManager.setModelLoading("Model yükleniyor: ${translationConfig.modelFileName}")
         }
         engine.initialize()
         withContext(Dispatchers.Main) {
-            overlayManager.setModelReady("Model hazir: ${translationConfig.modelFileName}")
+            overlayManager.setModelReady("Model hazır: ${translationConfig.modelFileName}")
         }
     }
 
@@ -925,7 +925,7 @@ class MangaTranslationService : LifecycleService() {
             withContext(Dispatchers.IO) {
                 gemmaInferenceEngine?.close()
             }
-            overlayManager.setOperationStatus("Model bosta oldugu icin gecici olarak kapatildi")
+            overlayManager.setOperationStatus("Model boşta olduğu için geçici olarak kapatıldı")
         }
     }
 
@@ -958,7 +958,7 @@ class MangaTranslationService : LifecycleService() {
             )
         )
 
-        // Compose icin lifecycle ve savedState baglantisi
+        // Compose için lifecycle ve savedState bağlantısı
         overlayContainer.setViewTreeLifecycleOwner(this)
         overlayContainer.setViewTreeSavedStateRegistryOwner(savedStateOwner)
         composeView.setViewTreeSavedStateRegistryOwner(savedStateOwner)
@@ -981,7 +981,7 @@ class MangaTranslationService : LifecycleService() {
         overlayContainer.setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
                 clearTranslationOverlay()
-                overlayManager.setOperationStatus("Overlay dokunma ile kapatildi")
+                overlayManager.setOperationStatus("Overlay dokunma ile kapatıldı")
                 return@setOnTouchListener true
             }
             false
@@ -993,7 +993,7 @@ class MangaTranslationService : LifecycleService() {
             scheduleOverlayDismiss()
         }.onFailure {
             Log.e(TAG, "translation overlay add failed", it)
-            overlayManager.setModelError("Overlay gosterilemedi")
+            overlayManager.setModelError("Overlay gösterilemedi")
         }
     }
 
@@ -1116,7 +1116,7 @@ class MangaTranslationService : LifecycleService() {
         overlayDismissJob = lifecycleScope.launch {
             delay(OVERLAY_VISIBLE_MS)
             clearTranslationOverlay()
-            overlayManager.setOperationStatus("Overlay 20 saniye sonra kapatildi")
+            overlayManager.setOperationStatus("Overlay 20 saniye sonra kapatıldı")
         }
     }
 
@@ -1417,10 +1417,10 @@ private enum class TranslationStage(val label: String) {
     IDLE("Beklemede"),
     CAPTURE("Yakalama"),
     OCR("OCR"),
-    DICTIONARY("Sozluk"),
-    CACHE("Onbellek"),
+    DICTIONARY("Sözlük"),
+    CACHE("Önbellek"),
     MODEL("Model"),
-    PARSE("Ayrisma"),
+    PARSE("Ayrışma"),
     RENDER("Overlay")
 }
 
@@ -1448,7 +1448,7 @@ private data class TranslationConfig(
     val modelFileName: String = "gemma-4-E2B-it.litertlm",
     val sourceLanguage: String = "English",
     val targetLanguage: String = "Turkish",
-    val translationTone: String = "Dogal",
+    val translationTone: String = "Doğal",
     val literalMode: Boolean = false,
     val dictionaryProfile: String = TranslationCoreUtils.DEFAULT_DICTIONARY_PROFILE
 )
