@@ -52,8 +52,9 @@ Manifest dosyasında aşağıdaki izinler tanımlıdır:
 - compileSdk 36 / targetSdk 36
 - Java 11 / Kotlin JVM target 11
 - Android Studio (güncel) + Gradle Wrapper
-- `app/src/main/assets` altında model dosyası:
-  - `gemma-4-E2B-it.litertlm`
+- Model dosyası ayrı olarak indirilmelidir (proje ile otomatik gelmez).
+- Şu an için indirilen model manuel olarak `app/src/main/assets` altına eklenmelidir.
+  - Örnek model adı: `gemma-4-E2B-it.litertlm`
 
 ## Kurulum
 
@@ -100,6 +101,11 @@ Release APK:
 - `app/src/main/java/com/vibecode/mangaceviriv2/OverlayRenderer.kt`
 - `app/src/main/java/com/vibecode/mangaceviriv2/TranslationFeedbackStore.kt`
 - `app/src/main/AndroidManifest.xml`
+
+## Gelecek Planları
+
+- Ayrı indirilen model dosyasının uygulama içinden seçilip otomatik olarak entegre edilmesi.
+- Model yönetimi için daha kullanıcı dostu bir kurulum/doğrulama akışı.
 
 ## Sorun Giderme
 
