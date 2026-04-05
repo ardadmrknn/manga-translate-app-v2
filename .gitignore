@@ -1,0 +1,48 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Build files
+/app/build
+*/build
+.gradle/
+
+# Log files
+*.log
+*.txt
+
+# Large Model files and binaries
+*.task
+*.litertlm
+*.bin
+*.gguf
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.tflite
+*.apk
+*.aab
+*.jar
+
+# Model and temp directories
+tmp_litertlm/
+app/src/main/assets/models/
+app/src/main/assets/*.litertlm
+
+# Signing secrets
+keystore.properties
+*.jks
+*.keystore
